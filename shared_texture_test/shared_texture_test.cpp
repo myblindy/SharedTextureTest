@@ -2,52 +2,51 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <ranges>
 
 #include "glad/glad.h"
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 using namespace std;
+namespace views = std::ranges::views;
 
 const int texWidth = 512, texHeight = 512;
 
 #define CHECK_VK_RESULT(f) do { if (auto vkResult = (f); vkResult != VK_SUCCESS) { std::cerr << "Vulkan error " << vkResult << " at " << __FILE__ << ":" << __LINE__ << endl; abort(); } } while(false)
 
-uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
+static uint32_t findMemoryType(const vk::PhysicalDevice& physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlags properties)
 {
-	VkPhysicalDeviceMemoryProperties memProperties;
-	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+	auto memProperties = physicalDevice.getMemoryProperties();
 
 	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-		if (typeFilter & (1 << i))
+		if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
 			return i;
 
 	throw std::runtime_error("failed to find suitable memory type!");
 }
 
-void createBuffer(VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+static void createBuffer(const vk::PhysicalDevice& physicalDevice, const vk::Device& device, vk::DeviceSize size,
+	vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
 {
-	VkBufferCreateInfo bufferInfo{};
-	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferInfo.size = size;
-	bufferInfo.usage = usage;
-	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	buffer = device.createBuffer({
+		.size = size,
+		.usage = usage,
+		.sharingMode = vk::SharingMode::eConcurrent  // exclusive?
+		});
 
-	CHECK_VK_RESULT(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS);
-
-	VkMemoryRequirements memRequirements;
-	vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
-
-	VkMemoryAllocateInfo allocInfo{};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
-
-	CHECK_VK_RESULT(vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS);
-
-	vkBindBufferMemory(device, buffer, bufferMemory, 0);
+	auto memRequirements = device.getBufferMemoryRequirements(buffer);
+	bufferMemory = device.allocateMemory({
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties)
+		});
+	device.bindBufferMemory(buffer, bufferMemory, 0);
 }
 
 int main()
@@ -68,137 +67,97 @@ int main()
 	glfwMakeContextCurrent(window);
 	gladLoadGL();
 
+	// vulkan dispatcher
+	VULKAN_HPP_DEFAULT_DISPATCHER.init();
+
 	// init vulkan instance
-	VkInstance instance{};
+	vk::Instance instance;
 	{
-		VkInstanceCreateInfo instanceCreateInfo{};
-		instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+		vector<const char*> extensions = { /*VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME*/ };
 
 		uint32_t glfwExtensionCount = 0;
-		const char** glfwExtensions;
+		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+		for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+			extensions.push_back(glfwExtensions[i]);
 
-		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-		instanceCreateInfo.enabledExtensionCount = glfwExtensionCount;
-		instanceCreateInfo.ppEnabledExtensionNames = glfwExtensions;
-
-		CHECK_VK_RESULT(vkCreateInstance(&instanceCreateInfo, nullptr, &instance));
+		instance = vk::createInstance(vk::InstanceCreateInfo{
+			.enabledExtensionCount = (uint32_t)extensions.size(),
+			.ppEnabledExtensionNames = extensions.data()
+			});
+		VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
 	}
 
 	// vulkan physical device
-	VkPhysicalDevice physicalDevice{};
-	{
-		uint32_t deviceCount = 0;
-		CHECK_VK_RESULT(vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr));
-		if (deviceCount == 0) {
-			cerr << "Failed to find GPUs with Vulkan support!" << endl;
-			return -1;
-		}
-		vector<VkPhysicalDevice> devices(deviceCount);
-		CHECK_VK_RESULT(vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data()));
-
-		// pick the discrete gpu if available
-		for (const auto& device : devices) {
-			VkPhysicalDeviceProperties deviceProperties;
-			vkGetPhysicalDeviceProperties(device, &deviceProperties);
-			if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-				physicalDevice = device;
-				break;
-			}
-		}
-		if (physicalDevice == VK_NULL_HANDLE) {
-			physicalDevice = devices[0];
-		}
-	}
+	auto allPhysicalDevices = instance.enumeratePhysicalDevices();
+	auto physicalDevice = *ranges::find_if(allPhysicalDevices,
+		[](auto& d) {return d.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu; });
 
 	// queue family indices
-	optional<uint32_t> graphicsQueueFamilyIndex;
-	{
-		uint32_t queueFamilyCount = 0;
-		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
-
-		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
-
-		int i = 0;
-		for (const auto& queueFamily : queueFamilies)
-		{
-			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-			{
-				graphicsQueueFamilyIndex = i;
-				break;
-			}
-
-			++i;
-		}
-
-		if (!graphicsQueueFamilyIndex.has_value())
-		{
-			cerr << "Could not find graphics queue family." << endl;
-			return -1;
-		}
-	}
+	auto allQueueFamilies = physicalDevice.getQueueFamilyProperties();
+	auto queueFamilyIndex = distance(allQueueFamilies.begin(),
+		std::find_if(allQueueFamilies.begin(), allQueueFamilies.end(),
+			[](vk::QueueFamilyProperties const& qfp) { return qfp.queueFlags & vk::QueueFlagBits::eGraphics; }));
 
 	// vulkan logical device 
-	VkDevice device{};
-	VkQueue graphicsQueue{};
+	vk::Device device;
+	vk::Queue graphicsQueue;
 	{
-		VkDeviceQueueCreateInfo queueCreateInfo{};
-		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex.value();
-		queueCreateInfo.queueCount = 1;
-
 		float queuePriority = 1.0f;
-		queueCreateInfo.pQueuePriorities = &queuePriority;
-
-		VkPhysicalDeviceFeatures deviceFeatures{};
-
-		VkDeviceCreateInfo createInfo{};
-		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		createInfo.pQueueCreateInfos = &queueCreateInfo;
-		createInfo.queueCreateInfoCount = 1;
-		createInfo.pEnabledFeatures = &deviceFeatures;
-		createInfo.enabledExtensionCount = 0;
-		createInfo.enabledLayerCount = 0; // validation layers go here
-
-		CHECK_VK_RESULT(vkCreateDevice(physicalDevice, &createInfo, nullptr, &device));
-		vkGetDeviceQueue(device, graphicsQueueFamilyIndex.value(), 0, &graphicsQueue);
+		vk::DeviceQueueCreateInfo queueCreateInfo{
+			.queueFamilyIndex = (uint32_t)queueFamilyIndex,
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriority
+		};
+		device = physicalDevice.createDevice({
+			.queueCreateInfoCount = 1,
+			.pQueueCreateInfos = &queueCreateInfo,
+			});
+		//VULKAN_HPP_DEFAULT_DISPATCHER.init(instance, device);
+		graphicsQueue = device.getQueue((uint32_t)queueFamilyIndex, 0);
 	}
 
 	// create shared texture
-	VkImage vulkanImage{};
-	VkDeviceMemory vulkanImageMemory{};
+	vk::Image vulkanImage;
+	vk::DeviceMemory vulkanImageMemory;
 	{
-		VkImageCreateInfo imageInfo{};
-		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-		imageInfo.extent.width = texWidth;
-		imageInfo.extent.height = texHeight;
-		imageInfo.extent.depth = 1;
-		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1;
-		imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-		imageInfo.tiling = VK_IMAGE_TILING_LINEAR; // optimal?
-		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // VK_IMAGE_USAGE_SAMPLED_BIT?
-		imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT; // VK_SHARING_MODE_EXCLUSIVE?
+		vulkanImage = device.createImage({
+			.imageType = vk::ImageType::e2D,
+			.format = vk::Format::eR8G8B8A8Srgb,
+			.extent = { (uint32_t)texWidth, (uint32_t)texHeight, 1 },
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = vk::SampleCountFlagBits::e1,
+			.tiling = vk::ImageTiling::eLinear, // optimal?
+			.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, // vk::ImageUsageFlagBits::eSampled?
+			.sharingMode = vk::SharingMode::eConcurrent, // vk::SharingMode::eExclusive?
+			.initialLayout = vk::ImageLayout::eUndefined,
+			});
 
-		CHECK_VK_RESULT(vkCreateImage(device, &imageInfo, nullptr, &vulkanImage));
-
-		VkMemoryRequirements memRequirements;
-		vkGetImageMemoryRequirements(device, vulkanImage, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo{};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-		CHECK_VK_RESULT(vkAllocateMemory(device, &allocInfo, nullptr, &vulkanImageMemory) != VK_SUCCESS);
-		CHECK_VK_RESULT(vkBindImageMemory(device, vulkanImage, vulkanImageMemory, 0));
+		auto memoryRequirements = device.getImageMemoryRequirements(vulkanImage);
+		vk::ExportMemoryAllocateInfo exportInfo{
+				.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
+		};
+		vulkanImageMemory = device.allocateMemory({
+			.pNext = &exportInfo,
+			.allocationSize = memoryRequirements.size,
+			.memoryTypeIndex = findMemoryType(physicalDevice, memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
+			});
+		device.bindImageMemory(vulkanImage, vulkanImageMemory, 0);
 	}
 
-	// get OpenGL texture from the vulkan shared texture
-	auto vkGetMemoryWin32HandleKHR2 = PFN_vkGetMemoryWin32HandleKHR(vkGetDeviceProcAddr(device, "vkGetMemoryWin32HandleKHR"));
+	//// get OpenGL texture from the vulkan shared texture
+	//VkMemoryGetWin32HandleInfoKHR info{
+	//		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
+	//		.pNext = nullptr,
+	//		.memory = vulkanImageMemory,
+	//		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT
+	//};
+	//HANDLE handle;
+	//vk::detail::defaultDispatchLoaderDynamic.vkGetMemoryWin32HandleKHR(device, &info, &handle);
+	auto hTextureMem = (HANDLE)device.getMemoryWin32HandleKHR({
+		.memory = vulkanImageMemory,
+		.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
+		});
 
 	// main loop
 	while (!glfwWindowShouldClose(window)) {
