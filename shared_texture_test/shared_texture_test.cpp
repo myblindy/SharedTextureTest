@@ -223,6 +223,8 @@ int main()
 	vk::DeviceMemory vulkanImageMemory;
 	vk::DeviceSize vulkanImageMemorySize;
 	vk::CommandBuffer cmdBuffer;
+	vk::Semaphore vulkanImageTransitionCompleteSemaphore;
+	GLuint glImageTransitionCompleteSemaphore;
 	{
 		vulkanImage = device.createImage({
 			.imageType = vk::ImageType::e2D,
@@ -258,6 +260,20 @@ int main()
 			.commandBufferCount = 1
 			})[0];
 
+		// create semaphore for layout transition
+		vk::ExportSemaphoreCreateInfo exportSemaphoreCreateInfo{
+			.handleTypes = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32
+		};
+		vulkanImageTransitionCompleteSemaphore = device.createSemaphore({
+			.pNext = &exportSemaphoreCreateInfo
+			});
+		auto hSemaphore = (HANDLE)device.getSemaphoreWin32HandleKHR({
+			.semaphore = vulkanImageTransitionCompleteSemaphore,
+			.handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32
+			});
+		glGenSemaphoresEXT(1, &glImageTransitionCompleteSemaphore);
+		glImportSemaphoreWin32HandleEXT(glImageTransitionCompleteSemaphore, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hSemaphore);
+
 		// transition image layout
 		cmdBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
@@ -279,7 +295,12 @@ int main()
 			1, &imageBarrier);
 		cmdBuffer.end();
 		graphicsQueue.submit({
-			{.commandBufferCount = 1, .pCommandBuffers = &cmdBuffer  }
+			{
+				.commandBufferCount = 1,
+				.pCommandBuffers = &cmdBuffer,
+				.signalSemaphoreCount = 1,
+				.pSignalSemaphores = &vulkanImageTransitionCompleteSemaphore,
+			} 
 			});
 	}
 
@@ -407,6 +428,9 @@ int main()
 	glLinkProgram(computeProgram);
 	CheckProgramCompilation(computeProgram);
 	glDeleteShader(computeShader);
+
+	// wait (asynchroneously) for the vulkan image layout transition to complete
+	glWaitSemaphoreEXT(glImageTransitionCompleteSemaphore, 0, nullptr, 0, nullptr, nullptr);
 
 	assert(glGetError() == GL_NO_ERROR);
 
