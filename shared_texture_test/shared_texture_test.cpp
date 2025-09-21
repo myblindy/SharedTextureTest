@@ -300,7 +300,7 @@ int main()
 				.pCommandBuffers = &cmdBuffer,
 				.signalSemaphoreCount = 1,
 				.pSignalSemaphores = &vulkanImageTransitionCompleteSemaphore,
-			} 
+			}
 			});
 	}
 
@@ -441,8 +441,7 @@ int main()
 		// dispatch compute shader to the shared texture
 		glUseProgram(computeProgram);
 		glBindImageTexture(0, glTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-		float time = (float)glfwGetTime();
-		glUniform1f(glGetUniformLocation(computeProgram, "time"), time);
+		glUniform1f(glGetUniformLocation(computeProgram, "time"), (float)glfwGetTime());
 		glDispatchCompute((GLuint)ceil(texWidth / 16.0f), (GLuint)ceil(texHeight / 16.0f), 1);
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
