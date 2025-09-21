@@ -8,11 +8,11 @@
 #include "glad/glad.h"
 
 #define VK_USE_PLATFORM_WIN32_KHR
-#define GLFW_INCLUDE_VULKAN
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
-#include <GLFW/glfw3.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_vulkan.h>
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 using namespace std;
@@ -129,20 +129,22 @@ static void CheckProgramCompilation(GLuint program)
 
 int main()
 {
-	glfwInit();
+	SDL_Init(SDL_INIT_VIDEO);
 
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+	SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
 
-	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+#ifdef _DEBUG
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+#endif
 
-	auto window = glfwCreateWindow(800, 600, "Server", nullptr, nullptr);
+	auto window = SDL_CreateWindow("Server", 800, 600, SDL_WINDOW_OPENGL /*| SDL_WINDOW_VULKAN*/);
+	SDL_GL_SetSwapInterval(0);
+	auto glContext = SDL_GL_CreateContext(window);
 
 	// init opengl
-	glfwMakeContextCurrent(window);
 	gladLoadGL();
 
 	// vulkan dispatcher
@@ -162,10 +164,10 @@ int main()
 #endif
 		};
 
-		uint32_t glfwExtensionCount = 0;
-		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-		for (uint32_t i = 0; i < glfwExtensionCount; ++i)
-			extensions.push_back(glfwExtensions[i]);
+		uint32_t sdlExtensionCount = 0;
+		auto sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
+		for (uint32_t i = 0; i < sdlExtensionCount; ++i)
+			extensions.push_back(sdlExtensions[i]);
 
 		instance = vk::createInstance(vk::InstanceCreateInfo{
 			.enabledExtensionCount = (uint32_t)extensions.size(),
@@ -434,25 +436,58 @@ int main()
 
 	assert(glGetError() == GL_NO_ERROR);
 
+	// trigger new frames on a timer
+	constexpr double requestedFrameTime = 1.0 / 30.0;
+	auto renderEvent = SDL_RegisterEvents(1);
+	SDL_AddTimerNS(Uint64(requestedFrameTime * SDL_NS_PER_SECOND), [](auto data, auto timer, auto interval) {
+		SDL_Event event{ .type = (Uint32)(size_t)data };
+		SDL_PushEvent(&event);
+		return Uint64(requestedFrameTime * SDL_NS_PER_SECOND);
+		}, (void*)(size_t)renderEvent);
+
+#ifdef _DEBUG
+	// framerate counter
+	Uint64 frameCount = 0;
+	Uint64 lastTime = SDL_GetTicksNS();
+#endif
+
 	// main loop
-	while (!glfwWindowShouldClose(window)) {
-		glfwPollEvents();
+	while (true)
+	{
+		SDL_Event event;
+		if (SDL_WaitEvent(&event))
+			if (event.type == renderEvent)
+			{
+				// dispatch compute shader to the shared texture
+				glUseProgram(computeProgram);
+				glBindImageTexture(0, glTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+				glUniform1f(glGetUniformLocation(computeProgram, "time"), (float)SDL_GetTicksNS() / SDL_NS_PER_SECOND);
+				glDispatchCompute((GLuint)ceil(texWidth / 16.0f), (GLuint)ceil(texHeight / 16.0f), 1);
+				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-		// dispatch compute shader to the shared texture
-		glUseProgram(computeProgram);
-		glBindImageTexture(0, glTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-		glUniform1f(glGetUniformLocation(computeProgram, "time"), (float)glfwGetTime());
-		glDispatchCompute((GLuint)ceil(texWidth / 16.0f), (GLuint)ceil(texHeight / 16.0f), 1);
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+				// render
+				glClear(GL_COLOR_BUFFER_BIT);
 
-		// render
-		glClear(GL_COLOR_BUFFER_BIT);
+				glUseProgram(shaderProgram);
+				glBindVertexArray(vao);
+				glBindTexture(GL_TEXTURE_2D, glTexture);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
 
-		glUseProgram(shaderProgram);
-		glBindVertexArray(vao);
-		glBindTexture(GL_TEXTURE_2D, glTexture);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
+				SDL_GL_SwapWindow(window);
 
-		glfwSwapBuffers(window);
+#ifdef _DEBUG
+				// framerate counter
+				frameCount++;
+				auto currentTime = SDL_GetTicksNS();
+				if (currentTime - lastTime >= SDL_NS_PER_SECOND) {
+					SDL_SetWindowTitle(window, format("Server | FPS: {}", frameCount).c_str());
+					frameCount = 0;
+					lastTime = currentTime;
+				}
+#endif
+
+			}
+			else if (event.type == SDL_EVENT_QUIT)
+				break;
 	}
 }

@@ -4,6 +4,9 @@
       "name": "glad",
       "features": [ "gl-api-latest", "extensions" ]
     },
-    "glfw3"
+    {
+      "name": "sdl3",
+      "features": [ "vulkan" ]
+    }
   ]
 }
