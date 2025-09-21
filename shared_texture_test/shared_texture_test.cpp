@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include <ranges>
+#include <sstream>
 
 #include "glad/glad.h"
 
@@ -49,6 +50,83 @@ static void createBuffer(const vk::PhysicalDevice& physicalDevice, const vk::Dev
 	device.bindBufferMemory(buffer, bufferMemory, 0);
 }
 
+#ifdef _DEBUG
+VKAPI_ATTR vk::Bool32 VKAPI_CALL debugMessageFunc(vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
+	vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
+	vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
+	void* /*pUserData*/)
+{
+	std::ostringstream message;
+
+	message << vk::to_string(messageSeverity) << ": " << vk::to_string(messageTypes) << ":\n";
+	message << std::string("\t") << "messageIDName   = <" << pCallbackData->pMessageIdName << ">\n";
+	message << std::string("\t") << "messageIdNumber = " << pCallbackData->messageIdNumber << "\n";
+	message << std::string("\t") << "message         = <" << pCallbackData->pMessage << ">\n";
+	if (0 < pCallbackData->queueLabelCount)
+	{
+		message << std::string("\t") << "Queue Labels:\n";
+		for (uint32_t i = 0; i < pCallbackData->queueLabelCount; i++)
+		{
+			message << std::string("\t\t") << "labelName = <" << pCallbackData->pQueueLabels[i].pLabelName << ">\n";
+		}
+	}
+	if (0 < pCallbackData->cmdBufLabelCount)
+	{
+		message << std::string("\t") << "CommandBuffer Labels:\n";
+		for (uint32_t i = 0; i < pCallbackData->cmdBufLabelCount; i++)
+		{
+			message << std::string("\t\t") << "labelName = <" << pCallbackData->pCmdBufLabels[i].pLabelName << ">\n";
+		}
+	}
+	if (0 < pCallbackData->objectCount)
+	{
+		message << std::string("\t") << "Objects:\n";
+		for (uint32_t i = 0; i < pCallbackData->objectCount; i++)
+		{
+			message << std::string("\t\t") << "Object " << i << "\n";
+			message << std::string("\t\t\t") << "objectType   = " << vk::to_string(pCallbackData->pObjects[i].objectType) << "\n";
+			message << std::string("\t\t\t") << "objectHandle = " << pCallbackData->pObjects[i].objectHandle << "\n";
+			if (pCallbackData->pObjects[i].pObjectName)
+			{
+				message << std::string("\t\t\t") << "objectName   = <" << pCallbackData->pObjects[i].pObjectName << ">\n";
+			}
+		}
+	}
+
+#ifdef _WIN32
+	MessageBoxA(NULL, message.str().c_str(), "Alert", MB_OK);
+#else
+	std::cout << message.str() << std::endl;
+#endif
+
+	return false;
+}
+#endif
+
+static void CheckShaderCompilation(GLuint shader)
+{
+	GLint success;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+	if (!success) {
+		GLchar infoLog[1024];
+		glGetShaderInfoLog(shader, 1024, NULL, infoLog);
+		std::cerr << "Error compiling shader: " << infoLog << std::endl;
+		abort();
+	}
+}
+
+static void CheckProgramCompilation(GLuint program)
+{
+	GLint success;
+	glGetProgramiv(program, GL_LINK_STATUS, &success);
+	if (!success) {
+		GLchar infoLog[1024];
+		glGetProgramInfoLog(program, 1024, NULL, infoLog);
+		std::cerr << "Error linking program: " << infoLog << std::endl;
+		abort();
+	}
+}
+
 int main()
 {
 	glfwInit();
@@ -72,8 +150,17 @@ int main()
 
 	// init vulkan instance
 	vk::Instance instance;
+#ifdef _DEBUG
+	vk::DebugUtilsMessengerEXT debugUtilsMessenger;
+#endif
 	{
-		vector<const char*> extensions = { /*VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME*/ };
+		vector<const char*> extensions = {
+			VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+			VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+#ifdef _DEBUG
+			VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+#endif
+		};
 
 		uint32_t glfwExtensionCount = 0;
 		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -85,6 +172,13 @@ int main()
 			.ppEnabledExtensionNames = extensions.data()
 			});
 		VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
+
+#ifdef _DEBUG
+		debugUtilsMessenger = instance.createDebugUtilsMessengerEXT({
+			.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+			.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+			.pfnUserCallback = debugMessageFunc });
+#endif
 	}
 
 	// vulkan physical device
@@ -106,11 +200,19 @@ int main()
 		vk::DeviceQueueCreateInfo queueCreateInfo{
 			.queueFamilyIndex = (uint32_t)queueFamilyIndex,
 			.queueCount = 1,
-			.pQueuePriorities = &queuePriority
+			.pQueuePriorities = &queuePriority,
+		};
+		const char* deviceExtensions[] = {
+			VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+			VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
+			VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+			VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
 		};
 		device = physicalDevice.createDevice({
 			.queueCreateInfoCount = 1,
 			.pQueueCreateInfos = &queueCreateInfo,
+			.enabledExtensionCount = 4,
+			.ppEnabledExtensionNames = deviceExtensions,
 			});
 		//VULKAN_HPP_DEFAULT_DISPATCHER.init(instance, device);
 		graphicsQueue = device.getQueue((uint32_t)queueFamilyIndex, 0);
@@ -119,6 +221,8 @@ int main()
 	// create shared texture
 	vk::Image vulkanImage;
 	vk::DeviceMemory vulkanImageMemory;
+	vk::DeviceSize vulkanImageMemorySize;
+	vk::CommandBuffer cmdBuffer;
 	{
 		vulkanImage = device.createImage({
 			.imageType = vk::ImageType::e2D,
@@ -134,8 +238,9 @@ int main()
 			});
 
 		auto memoryRequirements = device.getImageMemoryRequirements(vulkanImage);
+		vulkanImageMemorySize = memoryRequirements.size;
 		vk::ExportMemoryAllocateInfo exportInfo{
-				.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
+			.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
 		};
 		vulkanImageMemory = device.allocateMemory({
 			.pNext = &exportInfo,
@@ -143,24 +248,142 @@ int main()
 			.memoryTypeIndex = findMemoryType(physicalDevice, memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
 			});
 		device.bindImageMemory(vulkanImage, vulkanImageMemory, 0);
+
+		cmdBuffer = device.allocateCommandBuffers({
+			.commandPool = device.createCommandPool({
+				.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+				.queueFamilyIndex = (uint32_t)queueFamilyIndex
+				}),
+			.level = vk::CommandBufferLevel::ePrimary,
+			.commandBufferCount = 1
+			})[0];
+
+		// transition image layout
+		cmdBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+
+		vk::ImageMemoryBarrier imageBarrier{
+			.srcAccessMask = {},
+			.dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+			.oldLayout = vk::ImageLayout::eUndefined,
+			.newLayout = vk::ImageLayout::eTransferSrcOptimal,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = vulkanImage,
+			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+		};
+		cmdBuffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
+			{},
+			0, nullptr,
+			0, nullptr,
+			1, &imageBarrier);
+		cmdBuffer.end();
+		graphicsQueue.submit({
+			{.commandBufferCount = 1, .pCommandBuffers = &cmdBuffer  }
+			});
 	}
 
-	//// get OpenGL texture from the vulkan shared texture
-	//VkMemoryGetWin32HandleInfoKHR info{
-	//		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR,
-	//		.pNext = nullptr,
-	//		.memory = vulkanImageMemory,
-	//		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT
-	//};
-	//HANDLE handle;
-	//vk::detail::defaultDispatchLoaderDynamic.vkGetMemoryWin32HandleKHR(device, &info, &handle);
+	// get shared handle to the Vulkan image
 	auto hTextureMem = (HANDLE)device.getMemoryWin32HandleKHR({
 		.memory = vulkanImageMemory,
 		.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
 		});
 
+	// create opengl texture from the shared handle
+	GLuint glTextureMemory;
+	glCreateMemoryObjectsEXT(1, &glTextureMemory);
+	glImportMemoryWin32HandleEXT(glTextureMemory, vulkanImageMemorySize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hTextureMem);
+
+	GLuint glTexture;
+	glCreateTextures(GL_TEXTURE_2D, 1, &glTexture);
+	glTextureStorageMem2DEXT(glTexture, 1, GL_RGBA8, texWidth, texHeight, glTextureMemory, 0);
+
+	// setup
+	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+	glViewport(0, 0, 800, 600);
+	glEnable(GL_TEXTURE_2D);
+	glBindTexture(GL_TEXTURE_2D, glTexture);
+	glDisable(GL_DEPTH_TEST);
+
+	// vertex buffer
+	GLuint vbo;
+	glGenBuffers(1, &vbo);
+
+	// VAO
+	GLuint vao;
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	float vertices[] = {
+		-1, -1, 0, 0, 0,
+		 1, -1, 0, 1, 0,
+		 1,  1, 0, 1, 1,
+		-1, -1, 0, 0, 0,
+		 1,  1, 0, 1, 1,
+		 -1,  1, 0, 0, 1
+	};
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(0);
+
+	// vertex shader
+	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	const auto vertexShaderSource = R"(
+		#version 330 core
+		layout (location = 0) in vec3 aPos;
+		layout (location = 1) in vec2 aUv;
+
+		out vec2 vUv;
+
+		void main()
+		{
+			gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+			vUv = aUv;
+		})";
+	glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+	glCompileShader(vertexShader);
+	CheckShaderCompilation(vertexShader);
+
+	// fragment shader
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	const auto fragmentShaderSource = R"(
+		#version 330 core
+
+		in vec2 vUv;
+
+		out vec4 FragColor;
+
+		void main()
+		{
+			FragColor = vec4(vUv.xy, 0.0, 1.0);
+		})";
+	glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+	glCompileShader(fragmentShader);
+	CheckShaderCompilation(fragmentShader);
+
+	// shader program
+	GLuint shaderProgram = glCreateProgram();
+	glAttachShader(shaderProgram, vertexShader);
+	glAttachShader(shaderProgram, fragmentShader);
+	glLinkProgram(shaderProgram);
+	CheckProgramCompilation(shaderProgram);
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+
 	// main loop
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+
+		// render
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		glUseProgram(shaderProgram);
+		glBindVertexArray(vao);
+		glBindTexture(GL_TEXTURE_2D, glTexture);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+
+		glfwSwapBuffers(window);
 	}
 }

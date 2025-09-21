@@ -1,3 +1,9 @@
 {
-  "dependencies": ["glad", "glfw3"]
+  "dependencies": [
+    {
+      "name": "glad",
+      "features": [ "gl-api-latest", "extensions" ]
+    },
+    "glfw3"
+  ]
 }
