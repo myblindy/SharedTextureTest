@@ -301,9 +301,8 @@ int main()
 	// setup
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glViewport(0, 0, 800, 600);
-	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, glTexture);
 	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
 
 	// vertex buffer
 	GLuint vbo;
@@ -325,8 +324,9 @@ int main()
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
 	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
 
 	// vertex shader
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -352,12 +352,13 @@ int main()
 		#version 330 core
 
 		in vec2 vUv;
+		uniform sampler2D sharedTexture;
 
 		out vec4 FragColor;
 
 		void main()
 		{
-			FragColor = vec4(vUv.xy, 0.0, 1.0);
+			FragColor = texture(sharedTexture, vUv);
 		})";
 	glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
 	glCompileShader(fragmentShader);
@@ -372,9 +373,54 @@ int main()
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
 
+	assert(glGetError() == GL_NO_ERROR);
+
+	// compute shader that draws expanding circles
+	GLuint computeShader = glCreateShader(GL_COMPUTE_SHADER);
+	const auto computeShaderSource = R"(
+		#version 430 core
+		layout (local_size_x = 16, local_size_y = 16) in;
+
+		layout (rgba8, binding = 0) uniform image2D img_output;
+		layout (location = 1) uniform float time;
+
+		void main() {
+			ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+			ivec2 img_size = imageSize(img_output);
+			if (pixel_coords.x >= img_size.x || pixel_coords.y >= img_size.y) {
+				return;
+			}
+			vec2 uv = vec2(pixel_coords) / vec2(img_size);
+			vec2 center = vec2(0.5, 0.5);
+			float dist = distance(uv, center);
+
+			float color = pow(sin((dist + time / 20.0) * 40.0), 2.0);
+			vec4 outColor = vec4(color, color, color, 1.0);
+			imageStore(img_output, pixel_coords, outColor);
+		})";
+	glShaderSource(computeShader, 1, &computeShaderSource, nullptr);
+	glCompileShader(computeShader);
+	CheckShaderCompilation(computeShader);
+
+	GLuint computeProgram = glCreateProgram();
+	glAttachShader(computeProgram, computeShader);
+	glLinkProgram(computeProgram);
+	CheckProgramCompilation(computeProgram);
+	glDeleteShader(computeShader);
+
+	assert(glGetError() == GL_NO_ERROR);
+
 	// main loop
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+
+		// dispatch compute shader to the shared texture
+		glUseProgram(computeProgram);
+		glBindImageTexture(0, glTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+		float time = (float)glfwGetTime();
+		glUniform1f(glGetUniformLocation(computeProgram, "time"), time);
+		glDispatchCompute((GLuint)ceil(texWidth / 16.0f), (GLuint)ceil(texHeight / 16.0f), 1);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
 		// render
 		glClear(GL_COLOR_BUFFER_BIT);
