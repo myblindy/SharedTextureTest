@@ -40,7 +40,11 @@
 # debug information files
 *.dwo
 /.vs
-/shared_texture_test/vcpkg_installed
+vcpkg_installed
 /shared_texture_test/x64
 /shared_texture_test/shared_texture_test.vcxproj.filters
 /shared_texture_test/shared_texture_test.vcxproj.user
+
+obj
+bin
+*.user

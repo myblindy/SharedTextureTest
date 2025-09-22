@@ -244,7 +244,7 @@ int main()
 		auto memoryRequirements = device.getImageMemoryRequirements(vulkanImage);
 		vulkanImageMemorySize = memoryRequirements.size;
 		vk::ExportMemoryAllocateInfo exportInfo{
-			.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
+			.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32 | vk::ExternalMemoryHandleTypeFlagBits::eD3D11Texture
 		};
 		vulkanImageMemory = device.allocateMemory({
 			.pNext = &exportInfo,
@@ -435,6 +435,48 @@ int main()
 	glWaitSemaphoreEXT(glImageTransitionCompleteSemaphore, 0, nullptr, 0, nullptr, nullptr);
 
 	assert(glGetError() == GL_NO_ERROR);
+
+	{
+		// create a pipe for the client to inherit the shared texture handle
+		constexpr auto pipeName = LR"(\\.\pipe\SharedTextureTestPipe)";
+		auto hPipe = CreateNamedPipe(pipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_WRITE_THROUGH,
+			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+			PIPE_UNLIMITED_INSTANCES, 1024, 0, 0, nullptr);
+		assert(hPipe != INVALID_HANDLE_VALUE);
+
+		// start the client with the necessary info
+		SHELLEXECUTEINFOA sei = { sizeof(sei) };
+		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
+		sei.lpVerb = "open";
+		sei.lpFile = "SharedTextureTestClient.exe";
+		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\Debug\\net10.0-windows";
+		ShellExecuteExA(&sei);
+
+		// get D3D11 shared handle to the Vulkan image 
+		auto hD3D11TextureMem = (HANDLE)device.getMemoryWin32HandleKHR({
+			.memory = vulkanImageMemory,
+			.handleType = vk::ExternalMemoryHandleTypeFlagBits::eD3D11Texture
+			});
+		
+		HANDLE hTargetTextureMem;
+		assert(sei.hProcess && sei.hProcess != INVALID_HANDLE_VALUE);
+		DuplicateHandle(GetCurrentProcess(), hTextureMem, sei.hProcess, &hTargetTextureMem, 0, TRUE, DUPLICATE_SAME_ACCESS);
+
+		auto message = format("{} {} {}\n", (size_t)hTargetTextureMem, texWidth, texHeight);
+
+		ConnectNamedPipe(hPipe, nullptr);
+
+		DWORD bytesWritten;
+		WriteFile(hPipe, message.c_str(), (DWORD)message.size(), &bytesWritten, nullptr);
+		assert(bytesWritten == message.size());
+
+		// wait for confirmation
+		char buffer[32]{};
+		DWORD bytesRead{};
+		ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, nullptr);
+
+		CloseHandle(hPipe);
+	}
 
 	// trigger new frames on a timer
 	constexpr double requestedFrameTime = 1.0 / 30.0;
