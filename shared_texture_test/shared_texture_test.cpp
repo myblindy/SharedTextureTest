@@ -449,7 +449,7 @@ int main()
 		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
 		sei.lpVerb = "open";
 		sei.lpFile = "SharedTextureTestClient.exe";
-		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\Debug\\net10.0-windows";
+		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\x64\\Debug\\net10.0-windows";
 		ShellExecuteExA(&sei);
 
 		// get D3D11 shared handle to the Vulkan image 
@@ -458,11 +458,10 @@ int main()
 			.handleType = vk::ExternalMemoryHandleTypeFlagBits::eD3D11Texture
 			});
 		
-		HANDLE hTargetTextureMem;
-		assert(sei.hProcess && sei.hProcess != INVALID_HANDLE_VALUE);
-		DuplicateHandle(GetCurrentProcess(), hTextureMem, sei.hProcess, &hTargetTextureMem, 0, TRUE, DUPLICATE_SAME_ACCESS);
-
-		auto message = format("{} {} {}\n", (size_t)hTargetTextureMem, texWidth, texHeight);
+		// get real process handle
+		HANDLE hRealCurrentProcess;
+		DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &hRealCurrentProcess, 0, false, DUPLICATE_SAME_ACCESS);
+		auto message = format("{} {} {} {}\n", (int64_t)hRealCurrentProcess, (int64_t)hTextureMem, texWidth, texHeight);
 
 		ConnectNamedPipe(hPipe, nullptr);
 
