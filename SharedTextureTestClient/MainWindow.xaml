@@ -16,7 +16,7 @@
         <GroupBox Grid.Column="0" Header="Image">
             <Image>
                 <Image.Source>
-                    <i:D3DImage x:Name="d3dImage" />
+                    <local:D3D11Image x:Name="d3dImage" />
                 </Image.Source>
             </Image>
         </GroupBox>

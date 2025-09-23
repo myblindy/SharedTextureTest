@@ -11,7 +11,7 @@ class SharedTextureInterop : IDisposable
     public int Width => 512;
     public int Height => 512;
 
-    public unsafe IntPtr D3D9Texture => new(renderTexture.Handle);
+    public unsafe IntPtr D3D9Texture => new(wpfTexture.Handle);
 
     const string frameReadyEventName = "SharedTextureTestFrameReady";
     readonly EventWaitHandle frameReadyEvent =
@@ -20,7 +20,7 @@ class SharedTextureInterop : IDisposable
     readonly D3D11 d3d11 = D3D11.GetApi();
     readonly ComPtr<ID3D11Device5> d3d11Device;
     readonly ComPtr<ID3D11DeviceContext> d3d11DeviceContext;
-    readonly ComPtr<ID3D11Texture2D> sharedTexture, renderTexture;
+    readonly ComPtr<ID3D11Texture2D> sharedTexture, wpfTexture;
 
     public event Action? FrameReady;
 
@@ -56,6 +56,10 @@ class SharedTextureInterop : IDisposable
         using var dxgiTextureResource = sharedTexture.QueryInterface<IDXGIResource1>();
         SilkMarshal.ThrowHResult(dxgiTextureResource.CreateSharedHandle(default(SecurityAttributes*),
             DXGI.SharedResourceWrite | DXGI.SharedResourceRead, default(char*), (void**)&sharedHandle));
+
+        // wpf texture
+        desc.MiscFlags = (uint)ResourceMiscFlag.SharedKeyedmutex;
+        SilkMarshal.ThrowHResult(d3d11Device.CreateTexture2D(&desc, null, ref wpfTexture));
 
         using (var pipe = new NamedPipeClientStream(".", "SharedTextureTestPipe",
             PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.WriteThrough))
@@ -98,7 +102,6 @@ class SharedTextureInterop : IDisposable
             frameClockThread.Join();
 
             sharedTexture.Dispose();
-            renderTexture.Dispose();
             d3d11DeviceContext.Dispose();
             d3d11Device.Dispose();
             frameReadyEvent.Dispose();

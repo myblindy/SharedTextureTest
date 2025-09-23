@@ -106,7 +106,6 @@ int main()
 #endif
 
 	GLuint sharedTexture;
-	GLuint glTextureMemory;
 	int texWidth, texHeight;
 	HANDLE frameReadyEvent;
 	{
@@ -160,6 +159,7 @@ int main()
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
+			GLuint glTextureMemory;
 			glCreateMemoryObjectsEXT(1, &glTextureMemory);
 
 			texWidth = atoi(match[2].str().c_str());
@@ -176,6 +176,8 @@ int main()
 				cerr << "Error: glAcquireKeyedMutexWin32EXT failed" << endl;
 				abort();
 			}
+
+			glDeleteMemoryObjectsEXT(1, &glTextureMemory);
 
 			assert(glGetError() == GL_NO_ERROR);
 
@@ -327,8 +329,6 @@ int main()
 		if (SDL_WaitEvent(&event))
 			if (event.type == renderEvent)
 			{
-				glAcquireKeyedMutexWin32EXT(glTextureMemory, 0, INFINITE);
-
 				// dispatch compute shader to the shared texture
 				glUseProgram(computeProgram);
 				glBindImageTexture(0, sharedTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
@@ -344,8 +344,6 @@ int main()
 				glBindVertexArray(vao);
 				glBindTexture(GL_TEXTURE_2D, sharedTexture);
 				glDrawArrays(GL_TRIANGLES, 0, 6);
-
-				glReleaseKeyedMutexWin32EXT(glTextureMemory, 0);
 
 				SDL_GL_SwapWindow(window);
 
