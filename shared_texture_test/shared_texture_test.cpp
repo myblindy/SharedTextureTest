@@ -4,104 +4,17 @@
 #include <optional>
 #include <ranges>
 #include <sstream>
+#include <regex>
+#include <assert.h>
 
 #include "glad/glad.h"
 
-#define VK_USE_PLATFORM_WIN32_KHR
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-#define VULKAN_HPP_NO_CONSTRUCTORS
-#include <vulkan/vulkan.hpp>
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+
+#include <windows.h>
 
 using namespace std;
 namespace views = std::ranges::views;
-
-const int texWidth = 512, texHeight = 512;
-
-#define CHECK_VK_RESULT(f) do { if (auto vkResult = (f); vkResult != VK_SUCCESS) { std::cerr << "Vulkan error " << vkResult << " at " << __FILE__ << ":" << __LINE__ << endl; abort(); } } while(false)
-
-static uint32_t findMemoryType(const vk::PhysicalDevice& physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlags properties)
-{
-	auto memProperties = physicalDevice.getMemoryProperties();
-
-	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
-		if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
-			return i;
-
-	throw std::runtime_error("failed to find suitable memory type!");
-}
-
-static void createBuffer(const vk::PhysicalDevice& physicalDevice, const vk::Device& device, vk::DeviceSize size,
-	vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
-{
-	buffer = device.createBuffer({
-		.size = size,
-		.usage = usage,
-		.sharingMode = vk::SharingMode::eConcurrent  // exclusive?
-		});
-
-	auto memRequirements = device.getBufferMemoryRequirements(buffer);
-	bufferMemory = device.allocateMemory({
-		.allocationSize = memRequirements.size,
-		.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties)
-		});
-	device.bindBufferMemory(buffer, bufferMemory, 0);
-}
-
-#ifdef _DEBUG
-VKAPI_ATTR vk::Bool32 VKAPI_CALL debugMessageFunc(vk::DebugUtilsMessageSeverityFlagBitsEXT       messageSeverity,
-	vk::DebugUtilsMessageTypeFlagsEXT              messageTypes,
-	vk::DebugUtilsMessengerCallbackDataEXT const* pCallbackData,
-	void* /*pUserData*/)
-{
-	std::ostringstream message;
-
-	message << vk::to_string(messageSeverity) << ": " << vk::to_string(messageTypes) << ":\n";
-	message << std::string("\t") << "messageIDName   = <" << pCallbackData->pMessageIdName << ">\n";
-	message << std::string("\t") << "messageIdNumber = " << pCallbackData->messageIdNumber << "\n";
-	message << std::string("\t") << "message         = <" << pCallbackData->pMessage << ">\n";
-	if (0 < pCallbackData->queueLabelCount)
-	{
-		message << std::string("\t") << "Queue Labels:\n";
-		for (uint32_t i = 0; i < pCallbackData->queueLabelCount; i++)
-		{
-			message << std::string("\t\t") << "labelName = <" << pCallbackData->pQueueLabels[i].pLabelName << ">\n";
-		}
-	}
-	if (0 < pCallbackData->cmdBufLabelCount)
-	{
-		message << std::string("\t") << "CommandBuffer Labels:\n";
-		for (uint32_t i = 0; i < pCallbackData->cmdBufLabelCount; i++)
-		{
-			message << std::string("\t\t") << "labelName = <" << pCallbackData->pCmdBufLabels[i].pLabelName << ">\n";
-		}
-	}
-	if (0 < pCallbackData->objectCount)
-	{
-		message << std::string("\t") << "Objects:\n";
-		for (uint32_t i = 0; i < pCallbackData->objectCount; i++)
-		{
-			message << std::string("\t\t") << "Object " << i << "\n";
-			message << std::string("\t\t\t") << "objectType   = " << vk::to_string(pCallbackData->pObjects[i].objectType) << "\n";
-			message << std::string("\t\t\t") << "objectHandle = " << pCallbackData->pObjects[i].objectHandle << "\n";
-			if (pCallbackData->pObjects[i].pObjectName)
-			{
-				message << std::string("\t\t\t") << "objectName   = <" << pCallbackData->pObjects[i].pObjectName << ">\n";
-			}
-		}
-	}
-
-#ifdef _WIN32
-	MessageBoxA(NULL, message.str().c_str(), "Alert", MB_OK);
-#else
-	std::cout << message.str() << std::endl;
-#endif
-
-	return false;
-}
-#endif
 
 static void CheckShaderCompilation(GLuint shader)
 {
@@ -147,179 +60,135 @@ int main()
 	// init opengl
 	gladLoadGL();
 
-	// vulkan dispatcher
-	VULKAN_HPP_DEFAULT_DISPATCHER.init();
-
-	// init vulkan instance
-	vk::Instance instance;
 #ifdef _DEBUG
-	vk::DebugUtilsMessengerEXT debugUtilsMessenger;
+	glEnable(GL_DEBUG_OUTPUT);
+	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+
+	glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam) {
+		if (id == 131169 || id == 131185 || id == 131218 || id == 131204) return;
+
+		std::cout << "---------------" << std::endl;
+		std::cout << "Debug message (" << id << "): " << message << std::endl;
+
+		switch (source)
+		{
+		case GL_DEBUG_SOURCE_API:             std::cout << "Source: API"; break;
+		case GL_DEBUG_SOURCE_WINDOW_SYSTEM:   std::cout << "Source: Window System"; break;
+		case GL_DEBUG_SOURCE_SHADER_COMPILER: std::cout << "Source: Shader Compiler"; break;
+		case GL_DEBUG_SOURCE_THIRD_PARTY:     std::cout << "Source: Third Party"; break;
+		case GL_DEBUG_SOURCE_APPLICATION:     std::cout << "Source: Application"; break;
+		case GL_DEBUG_SOURCE_OTHER:           std::cout << "Source: Other"; break;
+		} std::cout << std::endl;
+
+		switch (type)
+		{
+		case GL_DEBUG_TYPE_ERROR:               std::cout << "Type: Error"; break;
+		case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: std::cout << "Type: Deprecated Behaviour"; break;
+		case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:  std::cout << "Type: Undefined Behaviour"; break;
+		case GL_DEBUG_TYPE_PORTABILITY:         std::cout << "Type: Portability"; break;
+		case GL_DEBUG_TYPE_PERFORMANCE:         std::cout << "Type: Performance"; break;
+		case GL_DEBUG_TYPE_MARKER:              std::cout << "Type: Marker"; break;
+		case GL_DEBUG_TYPE_PUSH_GROUP:          std::cout << "Type: Push Group"; break;
+		case GL_DEBUG_TYPE_POP_GROUP:           std::cout << "Type: Pop Group"; break;
+		case GL_DEBUG_TYPE_OTHER:               std::cout << "Type: Other"; break;
+		} std::cout << std::endl;
+
+		switch (severity)
+		{
+		case GL_DEBUG_SEVERITY_HIGH:         std::cout << "Severity: high"; break;
+		case GL_DEBUG_SEVERITY_MEDIUM:       std::cout << "Severity: medium"; break;
+		case GL_DEBUG_SEVERITY_LOW:          std::cout << "Severity: low"; break;
+		case GL_DEBUG_SEVERITY_NOTIFICATION: std::cout << "Severity: notification"; break;
+		} std::cout << std::endl;
+		std::cout << std::endl;
+		}, nullptr);
+	glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 #endif
-	{
-		vector<const char*> extensions = {
-			VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-			VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
-#ifdef _DEBUG
-			VK_EXT_DEBUG_UTILS_EXTENSION_NAME
-#endif
-		};
 
-		uint32_t sdlExtensionCount = 0;
-		auto sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
-		for (uint32_t i = 0; i < sdlExtensionCount; ++i)
-			extensions.push_back(sdlExtensions[i]);
-
-		instance = vk::createInstance(vk::InstanceCreateInfo{
-			.enabledExtensionCount = (uint32_t)extensions.size(),
-			.ppEnabledExtensionNames = extensions.data()
-			});
-		VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
-
-#ifdef _DEBUG
-		debugUtilsMessenger = instance.createDebugUtilsMessengerEXT({
-			.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-			.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-			.pfnUserCallback = debugMessageFunc });
-#endif
-	}
-
-	// vulkan physical device
-	auto allPhysicalDevices = instance.enumeratePhysicalDevices();
-	auto physicalDevice = *ranges::find_if(allPhysicalDevices,
-		[](auto& d) {return d.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu; });
-
-	// queue family indices
-	auto allQueueFamilies = physicalDevice.getQueueFamilyProperties();
-	auto queueFamilyIndex = distance(allQueueFamilies.begin(),
-		std::find_if(allQueueFamilies.begin(), allQueueFamilies.end(),
-			[](vk::QueueFamilyProperties const& qfp) { return qfp.queueFlags & vk::QueueFlagBits::eGraphics; }));
-
-	// vulkan logical device 
-	vk::Device device;
-	vk::Queue graphicsQueue;
-	{
-		float queuePriority = 1.0f;
-		vk::DeviceQueueCreateInfo queueCreateInfo{
-			.queueFamilyIndex = (uint32_t)queueFamilyIndex,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriority,
-		};
-		const char* deviceExtensions[] = {
-			VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-			VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
-			VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-			VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
-		};
-		device = physicalDevice.createDevice({
-			.queueCreateInfoCount = 1,
-			.pQueueCreateInfos = &queueCreateInfo,
-			.enabledExtensionCount = 4,
-			.ppEnabledExtensionNames = deviceExtensions,
-			});
-		//VULKAN_HPP_DEFAULT_DISPATCHER.init(instance, device);
-		graphicsQueue = device.getQueue((uint32_t)queueFamilyIndex, 0);
-	}
-
-	// create shared texture
-	vk::Image vulkanImage;
-	vk::DeviceMemory vulkanImageMemory;
-	vk::DeviceSize vulkanImageMemorySize;
-	vk::CommandBuffer cmdBuffer;
-	vk::Semaphore vulkanImageTransitionCompleteSemaphore;
-	GLuint glImageTransitionCompleteSemaphore;
-	{
-		vulkanImage = device.createImage({
-			.imageType = vk::ImageType::e2D,
-			.format = vk::Format::eR8G8B8A8Srgb,
-			.extent = { (uint32_t)texWidth, (uint32_t)texHeight, 1 },
-			.mipLevels = 1,
-			.arrayLayers = 1,
-			.samples = vk::SampleCountFlagBits::e1,
-			.tiling = vk::ImageTiling::eLinear, // optimal?
-			.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, // vk::ImageUsageFlagBits::eSampled?
-			.sharingMode = vk::SharingMode::eConcurrent, // vk::SharingMode::eExclusive?
-			.initialLayout = vk::ImageLayout::eUndefined,
-			});
-
-		auto memoryRequirements = device.getImageMemoryRequirements(vulkanImage);
-		vulkanImageMemorySize = memoryRequirements.size;
-		vk::ExportMemoryAllocateInfo exportInfo{
-			.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32 | vk::ExternalMemoryHandleTypeFlagBits::eD3D11Texture
-		};
-		vulkanImageMemory = device.allocateMemory({
-			.pNext = &exportInfo,
-			.allocationSize = memoryRequirements.size,
-			.memoryTypeIndex = findMemoryType(physicalDevice, memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal),
-			});
-		device.bindImageMemory(vulkanImage, vulkanImageMemory, 0);
-
-		cmdBuffer = device.allocateCommandBuffers({
-			.commandPool = device.createCommandPool({
-				.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-				.queueFamilyIndex = (uint32_t)queueFamilyIndex
-				}),
-			.level = vk::CommandBufferLevel::ePrimary,
-			.commandBufferCount = 1
-			})[0];
-
-		// create semaphore for layout transition
-		vk::ExportSemaphoreCreateInfo exportSemaphoreCreateInfo{
-			.handleTypes = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32
-		};
-		vulkanImageTransitionCompleteSemaphore = device.createSemaphore({
-			.pNext = &exportSemaphoreCreateInfo
-			});
-		auto hSemaphore = (HANDLE)device.getSemaphoreWin32HandleKHR({
-			.semaphore = vulkanImageTransitionCompleteSemaphore,
-			.handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueWin32
-			});
-		glGenSemaphoresEXT(1, &glImageTransitionCompleteSemaphore);
-		glImportSemaphoreWin32HandleEXT(glImageTransitionCompleteSemaphore, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hSemaphore);
-
-		// transition image layout
-		cmdBuffer.begin({ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-
-		vk::ImageMemoryBarrier imageBarrier{
-			.srcAccessMask = {},
-			.dstAccessMask = vk::AccessFlagBits::eTransferWrite,
-			.oldLayout = vk::ImageLayout::eUndefined,
-			.newLayout = vk::ImageLayout::eTransferSrcOptimal,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = vulkanImage,
-			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-		};
-		cmdBuffer.pipelineBarrier(
-			vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
-			{},
-			0, nullptr,
-			0, nullptr,
-			1, &imageBarrier);
-		cmdBuffer.end();
-		graphicsQueue.submit({
-			{
-				.commandBufferCount = 1,
-				.pCommandBuffers = &cmdBuffer,
-				.signalSemaphoreCount = 1,
-				.pSignalSemaphores = &vulkanImageTransitionCompleteSemaphore,
-			}
-			});
-	}
-
-	// get shared handle to the Vulkan image
-	auto hTextureMem = (HANDLE)device.getMemoryWin32HandleKHR({
-		.memory = vulkanImageMemory,
-		.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueWin32
-		});
-
-	// create opengl texture from the shared handle
+	GLuint sharedTexture;
 	GLuint glTextureMemory;
-	glCreateMemoryObjectsEXT(1, &glTextureMemory);
-	glImportMemoryWin32HandleEXT(glTextureMemory, vulkanImageMemorySize, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hTextureMem);
+	int texWidth, texHeight;
+	HANDLE frameReadyEvent;
+	{
+		// create a pipe for the client to inherit the shared texture handle
+		constexpr auto pipeName = LR"(\\.\pipe\SharedTextureTestPipe)";
+		auto hPipe = CreateNamedPipe(pipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_WRITE_THROUGH,
+			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+			PIPE_UNLIMITED_INSTANCES, 1024, 0, 0, nullptr);
+		assert(hPipe != INVALID_HANDLE_VALUE);
 
-	GLuint glTexture;
-	glCreateTextures(GL_TEXTURE_2D, 1, &glTexture);
-	glTextureStorageMem2DEXT(glTexture, 1, GL_RGBA8, texWidth, texHeight, glTextureMemory, 0);
+		// start the client with the necessary info
+		SHELLEXECUTEINFOA sei = { sizeof(sei) };
+		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
+		sei.lpVerb = "open";
+		sei.lpFile = "SharedTextureTestClient.exe";
+		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\x64\\Debug\\net10.0-windows";
+		ShellExecuteExA(&sei);
+
+		ConnectNamedPipe(hPipe, nullptr);
+
+		// read the shared texture information from the client
+		DWORD bytesRead;
+		char buffer[128]{};
+		do {
+			ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr);
+		} while (bytesRead == 0);
+
+		{
+			regex re(R"(^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\w+)\s*$)");
+			smatch match;
+			string input = { buffer, bytesRead };
+			if (!regex_match(input, match, re) || match.size() != 5) {
+				cerr << "Error: Invalid data received from client: " << input << endl;
+				abort();
+			}
+
+
+			// get local handle from the client shared texture handle
+			auto hClientSharedTexture = (HANDLE)_strtoi64(match[1].str().c_str(), nullptr, 10);
+			HANDLE hTextureMem;
+			// OpenProcess(PROCESS_DUP_HANDLE, false, processAPID); ?
+			DuplicateHandle(sei.hProcess, hClientSharedTexture, GetCurrentProcess(), &hTextureMem, 0, false, DUPLICATE_SAME_ACCESS);
+			// close process handle
+
+			// create the texture from the shared handle
+			glCreateTextures(GL_TEXTURE_2D, 1, &sharedTexture);
+
+			glTextureParameteri(sharedTexture, GL_TEXTURE_TILING_EXT, GL_OPTIMAL_TILING_EXT); // D3D11 side is D3D11_TEXTURE_LAYOUT_UNDEFINED
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+			glCreateMemoryObjectsEXT(1, &glTextureMemory);
+
+			texWidth = atoi(match[2].str().c_str());
+			texHeight = atoi(match[3].str().c_str());
+			glImportMemoryWin32HandleEXT(glTextureMemory, texWidth * texHeight * 4 * 2, GL_HANDLE_TYPE_D3D11_IMAGE_EXT, hTextureMem);
+
+			if (glAcquireKeyedMutexWin32EXT(glTextureMemory, 0, INFINITE))
+			{
+				glTextureStorageMem2DEXT(sharedTexture, 1, GL_RGBA8, texWidth, texHeight, glTextureMemory, 0);
+				glReleaseKeyedMutexWin32EXT(glTextureMemory, 0);
+			}
+			else
+			{
+				cerr << "Error: glAcquireKeyedMutexWin32EXT failed" << endl;
+				abort();
+			}
+
+			assert(glGetError() == GL_NO_ERROR);
+
+			frameReadyEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, ("Global\\" + match[4].str()).c_str());
+			assert(frameReadyEvent);
+
+			// write the end
+			DWORD bytesWritten;
+			WriteFile(hPipe, "OK", 3, &bytesWritten, nullptr);
+		}
+
+		CloseHandle(hPipe);
+	}
 
 	// setup
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
@@ -432,50 +301,9 @@ int main()
 	glDeleteShader(computeShader);
 
 	// wait (asynchroneously) for the vulkan image layout transition to complete
-	glWaitSemaphoreEXT(glImageTransitionCompleteSemaphore, 0, nullptr, 0, nullptr, nullptr);
+	//glWaitSemaphoreEXT(glImageTransitionCompleteSemaphore, 0, nullptr, 0, nullptr, nullptr);
 
 	assert(glGetError() == GL_NO_ERROR);
-
-	{
-		// create a pipe for the client to inherit the shared texture handle
-		constexpr auto pipeName = LR"(\\.\pipe\SharedTextureTestPipe)";
-		auto hPipe = CreateNamedPipe(pipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_WRITE_THROUGH,
-			PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-			PIPE_UNLIMITED_INSTANCES, 1024, 0, 0, nullptr);
-		assert(hPipe != INVALID_HANDLE_VALUE);
-
-		// start the client with the necessary info
-		SHELLEXECUTEINFOA sei = { sizeof(sei) };
-		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
-		sei.lpVerb = "open";
-		sei.lpFile = "SharedTextureTestClient.exe";
-		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\x64\\Debug\\net10.0-windows";
-		ShellExecuteExA(&sei);
-
-		// get D3D11 shared handle to the Vulkan image 
-		auto hD3D11TextureMem = (HANDLE)device.getMemoryWin32HandleKHR({
-			.memory = vulkanImageMemory,
-			.handleType = vk::ExternalMemoryHandleTypeFlagBits::eD3D11Texture
-			});
-		
-		// get real process handle
-		HANDLE hRealCurrentProcess;
-		DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(), &hRealCurrentProcess, 0, false, DUPLICATE_SAME_ACCESS);
-		auto message = format("{} {} {} {}\n", (int64_t)hRealCurrentProcess, (int64_t)hTextureMem, texWidth, texHeight);
-
-		ConnectNamedPipe(hPipe, nullptr);
-
-		DWORD bytesWritten;
-		WriteFile(hPipe, message.c_str(), (DWORD)message.size(), &bytesWritten, nullptr);
-		assert(bytesWritten == message.size());
-
-		// wait for confirmation
-		char buffer[32]{};
-		DWORD bytesRead{};
-		ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, nullptr);
-
-		CloseHandle(hPipe);
-	}
 
 	// trigger new frames on a timer
 	constexpr double requestedFrameTime = 1.0 / 30.0;
@@ -499,20 +327,25 @@ int main()
 		if (SDL_WaitEvent(&event))
 			if (event.type == renderEvent)
 			{
+				glAcquireKeyedMutexWin32EXT(glTextureMemory, 0, INFINITE);
+
 				// dispatch compute shader to the shared texture
 				glUseProgram(computeProgram);
-				glBindImageTexture(0, glTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+				glBindImageTexture(0, sharedTexture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 				glUniform1f(glGetUniformLocation(computeProgram, "time"), (float)SDL_GetTicksNS() / SDL_NS_PER_SECOND);
 				glDispatchCompute((GLuint)ceil(texWidth / 16.0f), (GLuint)ceil(texHeight / 16.0f), 1);
 				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+				SetEvent(frameReadyEvent);
 
 				// render
 				glClear(GL_COLOR_BUFFER_BIT);
 
 				glUseProgram(shaderProgram);
 				glBindVertexArray(vao);
-				glBindTexture(GL_TEXTURE_2D, glTexture);
+				glBindTexture(GL_TEXTURE_2D, sharedTexture);
 				glDrawArrays(GL_TRIANGLES, 0, 6);
+
+				glReleaseKeyedMutexWin32EXT(glTextureMemory, 0);
 
 				SDL_GL_SwapWindow(window);
 
@@ -521,7 +354,7 @@ int main()
 				frameCount++;
 				auto currentTime = SDL_GetTicksNS();
 				if (currentTime - lastTime >= SDL_NS_PER_SECOND) {
-					SDL_SetWindowTitle(window, format("Server | FPS: {}", frameCount).c_str());
+					//SDL_SetWindowTitle(window, format("Server | FPS: {}", frameCount).c_str());
 					frameCount = 0;
 					lastTime = currentTime;
 				}
