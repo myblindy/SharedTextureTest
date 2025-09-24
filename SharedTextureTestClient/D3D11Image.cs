@@ -2,7 +2,6 @@
 using Silk.NET.Direct3D11;
 using Silk.NET.Direct3D9;
 using Silk.NET.DXGI;
-using System.CodeDom;
 using System.Windows.Interop;
 using Windows.Win32;
 
@@ -43,8 +42,9 @@ internal class D3D11Image : D3DImage, IDisposable
     {
         SharedResource sharedHandle;
         using var dxgiTextureResource = d3d11RenderTarget.QueryInterface<IDXGIResource1>();
-        SilkMarshal.ThrowHResult(dxgiTextureResource.CreateSharedHandle(default(SecurityAttributes*),
-            DXGI.SharedResourceRead, default(char*), (void**)&sharedHandle));
+        //SilkMarshal.ThrowHResult(dxgiTextureResource.CreateSharedHandle(default(SecurityAttributes*),
+        //    DXGI.SharedResourceRead, default(char*), (void**)&sharedHandle));
+        SilkMarshal.ThrowHResult(dxgiTextureResource.GetSharedHandle((void**)&sharedHandle));
 
         Texture2DDesc desc = default;
         d3d11RenderTarget.GetDesc(ref desc);

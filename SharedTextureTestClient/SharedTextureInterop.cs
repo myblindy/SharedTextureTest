@@ -23,10 +23,10 @@ class SharedTextureInterop : IDisposable
     public ComPtr<ID3D11Texture2D> SharedTexture => sharedTexture;
     public ComPtr<ID3D11Texture2D> WpfTexture => wpfTexture;
 
-    public event Action? FrameReady;
+    public event Action? NewFrameReady;
 
     volatile bool stopping;
-    Thread frameClockThread;
+    readonly Thread frameClockThread;
 
     public unsafe SharedTextureInterop()
     {
@@ -59,7 +59,7 @@ class SharedTextureInterop : IDisposable
             DXGI.SharedResourceWrite | DXGI.SharedResourceRead, default(char*), (void**)&sharedHandle));
 
         // wpf texture
-        desc.MiscFlags = (uint)ResourceMiscFlag.SharedKeyedmutex;
+        desc.MiscFlags = (uint)(ResourceMiscFlag.Shared);
         SilkMarshal.ThrowHResult(d3d11Device.CreateTexture2D(&desc, null, ref wpfTexture));
 
         using (var pipe = new NamedPipeClientStream(".", "SharedTextureTestPipe",
@@ -80,7 +80,15 @@ class SharedTextureInterop : IDisposable
             while (!stopping)
             {
                 if (frameReadyEvent.WaitOne(100))
-                    FrameReady?.Invoke();
+                {
+                    ComPtr<ID3D11DeviceContext> d3d11DeviceContext = default;
+                    d3d11Device.GetImmediateContext(ref d3d11DeviceContext);
+                    d3d11DeviceContext.CopyResource(wpfTexture, sharedTexture);
+                    d3d11DeviceContext.Flush();
+                    d3d11DeviceContext.Dispose();
+
+                    NewFrameReady?.Invoke();
+                }
             }
         })
         { Name = "SharedTextureInterop Frame Clock Thread", IsBackground = true };
