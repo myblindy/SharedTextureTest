@@ -11,8 +11,6 @@ class SharedTextureInterop : IDisposable
     public int Width => 512;
     public int Height => 512;
 
-    public unsafe IntPtr D3D9Texture => new(wpfTexture.Handle);
-
     const string frameReadyEventName = "SharedTextureTestFrameReady";
     readonly EventWaitHandle frameReadyEvent =
         new(false, EventResetMode.AutoReset, $"Global\\{frameReadyEventName}");
@@ -21,6 +19,9 @@ class SharedTextureInterop : IDisposable
     readonly ComPtr<ID3D11Device5> d3d11Device;
     readonly ComPtr<ID3D11DeviceContext> d3d11DeviceContext;
     readonly ComPtr<ID3D11Texture2D> sharedTexture, wpfTexture;
+
+    public ComPtr<ID3D11Texture2D> SharedTexture => sharedTexture;
+    public ComPtr<ID3D11Texture2D> WpfTexture => wpfTexture;
 
     public event Action? FrameReady;
 

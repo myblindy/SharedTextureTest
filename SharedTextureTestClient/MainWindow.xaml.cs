@@ -1,5 +1,5 @@
-﻿using System.Windows;
-using System.Windows.Interop;
+﻿using System.Diagnostics;
+using System.Windows;
 
 namespace SharedTextureTestClient;
 
@@ -13,21 +13,22 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         Unloaded += (s, e) => sharedTextureInterop.Dispose();
+        d3dImage.IsFrontBufferAvailableChanged += frontBufferAvailableChangedHandler;
+    }
 
-        d3dImage.IsFrontBufferAvailableChanged += (s, e) =>
+    void frontBufferAvailableChangedHandler(object s, DependencyPropertyChangedEventArgs e)
+    {
+        if (d3dImage.IsFrontBufferAvailable && !backbufferSet)
         {
-            if (d3dImage.IsFrontBufferAvailable)
-            {
-                d3dImage.Lock();
-                d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, sharedTextureInterop.D3D9Texture);
-                d3dImage.Unlock();
-                backbufferSet = true;
-            }
-        };
+            Debugger.Launch();
+            d3dImage.SetBackBuffer(sharedTextureInterop.WpfTexture);
+            backbufferSet = true;
+        }
     }
 
     protected override void OnInitialized(EventArgs e)
     {
+        frontBufferAvailableChangedHandler(d3dImage, new());
         sharedTextureInterop.FrameReady += () => Dispatcher.BeginInvoke(() =>
         {
             if (backbufferSet)
@@ -38,5 +39,7 @@ public partial class MainWindow : Window
                 d3dImage.Unlock();
             }
         });
+
+        base.OnInitialized(e);
     }
 }

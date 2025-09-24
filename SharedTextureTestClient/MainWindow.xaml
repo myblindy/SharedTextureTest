@@ -2,9 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
         xmlns:local="clr-namespace:SharedTextureTestClient"
-        xmlns:i="clr-namespace:System.Windows.Interop;assembly=PresentationCore"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     <Grid Margin="20">
@@ -14,7 +13,7 @@
         </Grid.ColumnDefinitions>
 
         <GroupBox Grid.Column="0" Header="Image">
-            <Image>
+            <Image x:Name="SharedTextureImage">
                 <Image.Source>
                     <local:D3D11Image x:Name="d3dImage" />
                 </Image.Source>
