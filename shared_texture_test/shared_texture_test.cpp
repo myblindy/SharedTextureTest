@@ -121,8 +121,9 @@ int main()
 		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
 		sei.lpVerb = "open";
 		sei.lpFile = "SharedTextureTestClient.exe";
-		sei.lpDirectory = "..\\SharedTextureTestClient\\bin\\x64\\Debug\\net9.0-windows";
+		sei.lpDirectory = "..\\SharedTextureTestClient\\bin\\x64\\Debug\\net10.0-windows";
 		ShellExecuteExA(&sei);
+		assert(sei.hProcess);
 
 		ConnectNamedPipe(hPipe, nullptr);
 
@@ -352,7 +353,7 @@ int main()
 				frameCount++;
 				auto currentTime = SDL_GetTicksNS();
 				if (currentTime - lastTime >= SDL_NS_PER_SECOND) {
-					//SDL_SetWindowTitle(window, format("Server | FPS: {}", frameCount).c_str());
+					SDL_SetWindowTitle(window, format("Server | FPS: {}", frameCount).c_str());
 					frameCount = 0;
 					lastTime = currentTime;
 				}

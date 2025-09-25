@@ -5,12 +5,17 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
         xmlns:local="clr-namespace:SharedTextureTestClient"
         mc:Ignorable="d"
+        x:Name="RootWindow"
         Title="MainWindow" Height="450" Width="800" Loaded="OnLoaded" Background="LightCyan">
     <Grid Margin="20">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
         <GroupBox Grid.Column="0" Header="Image">
             <Image x:Name="SharedTextureImage">
@@ -24,5 +29,8 @@
             <StackPanel Margin="5">
             </StackPanel>
         </GroupBox>
+
+        <TextBox Grid.Row="1" Grid.ColumnSpan="2" IsReadOnly="True" Height="100" TextWrapping="Wrap"
+                 Text="{Binding ElementName=RootWindow, Path=SharedTextureInterop.Messages, Mode=OneWay}"/>
     </Grid>
 </Window>

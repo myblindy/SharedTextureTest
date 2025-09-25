@@ -1,17 +1,18 @@
-﻿using System.Windows;
+﻿using System.Collections.ObjectModel;
+using System.Windows;
 
 namespace SharedTextureTestClient;
 
 public partial class MainWindow : Window
 {
-    readonly SharedTextureInterop sharedTextureInterop = new();
+    public SharedTextureInterop SharedTextureInterop { get; } = new();
     bool backbufferSet;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        Unloaded += (s, e) => sharedTextureInterop.Dispose();
+        Unloaded += (s, e) => SharedTextureInterop.Dispose();
         d3dImage.IsFrontBufferAvailableChanged += frontBufferAvailableChangedHandler;
     }
 
@@ -20,7 +21,7 @@ public partial class MainWindow : Window
         if (d3dImage.IsFrontBufferAvailable && !backbufferSet)
         {
             //Debugger.Launch();
-            d3dImage.SetBackBuffer(sharedTextureInterop.WpfTexture);
+            d3dImage.SetBackBuffer(SharedTextureInterop.WpfTexture);
             backbufferSet = true;
         }
     }
@@ -28,13 +29,13 @@ public partial class MainWindow : Window
     private unsafe void OnLoaded(object sender, RoutedEventArgs e)
     {
         frontBufferAvailableChangedHandler(d3dImage, new());
-        sharedTextureInterop.NewFrameReady += () => Dispatcher.BeginInvoke(() =>
+        SharedTextureInterop.NewFrameReady += () => Dispatcher.BeginInvoke(() =>
         {
             if (backbufferSet)
             {
                 d3dImage.Lock();
                 d3dImage.AddDirtyRect(new Int32Rect(0, 0,
-                    sharedTextureInterop.Width, sharedTextureInterop.Height));
+                    SharedTextureInterop.Width, SharedTextureInterop.Height));
                 d3dImage.Unlock();
             }
         });

@@ -1,16 +1,32 @@
 ﻿using Silk.NET.Core.Native;
 using Silk.NET.Direct3D11;
 using Silk.NET.DXGI;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 
 namespace SharedTextureTestClient;
 
-class SharedTextureInterop : IDisposable
+public class SharedTextureInterop : INotifyPropertyChanged, IDisposable
 {
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public int Width => 512;
     public int Height => 512;
+
+    public string? Messages
+    {
+        get;
+        private set
+        {
+            if (value != Messages)
+            {
+                field = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Messages)));
+            }
+        }
+    }
 
     const string frameReadyEventName = "SharedTextureTestFrameReady";
     readonly EventWaitHandle frameReadyEvent =
@@ -24,8 +40,12 @@ class SharedTextureInterop : IDisposable
     public ComPtr<ID3D11Texture2D> SharedTexture => sharedTexture;
     public ComPtr<ID3D11Texture2D> WpfTexture => wpfTexture;
 
-    public event Action? NewFrameReady;
+    static readonly Guid allDevicesGuid = new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8);
 
+    readonly ComPtr<IDXGIInfoQueue> dxgiInfoQueue;
+    readonly ComPtr<ID3D11InfoQueue> d3d11InfoQueue;
+
+    public event Action? NewFrameReady;
     volatile bool stopping;
     readonly Thread frameClockThread;
 
@@ -41,23 +61,21 @@ class SharedTextureInterop : IDisposable
                 pFeatureLevels, 2, D3D11.SdkVersion, ref d3d11Device, null, ref d3d11DeviceContext));
 
         using (var d3d11Debug = d3d11Device.QueryInterface<ID3D11Debug>())
-        using (var d3d11DebugInfoQueue = d3d11Debug.QueryInterface<ID3D11InfoQueue>())
         {
-            d3d11DebugInfoQueue.SetBreakOnSeverity(MessageSeverity.Corruption, true);
-            d3d11DebugInfoQueue.SetBreakOnSeverity(MessageSeverity.Error, true);
-            d3d11DebugInfoQueue.PushEmptyStorageFilter();
+            d3d11InfoQueue = d3d11Debug.QueryInterface<ID3D11InfoQueue>();
+            d3d11InfoQueue.SetBreakOnSeverity(MessageSeverity.Corruption, true);
+            d3d11InfoQueue.SetBreakOnSeverity(MessageSeverity.Error, true);
+            d3d11InfoQueue.PushEmptyStorageFilter();
 
-            d3d11Debug.ReportLiveDeviceObjects(RldoFlags.Detail);
+            d3d11Debug.ReportLiveDeviceObjects(RldoFlags.Detail | RldoFlags.Summary);
         }
 
         using (var dxgi = DXGI.GetApi())
-        using (var dxgiDebug = dxgi.GetDebugInterface1<IDXGIInfoQueue>(0))
         {
-            dxgiDebug.SetBreakOnSeverity(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8),
-                InfoQueueMessageSeverity.Error, true);
-            dxgiDebug.SetBreakOnSeverity(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8),
-                InfoQueueMessageSeverity.Corruption, true);
-            dxgiDebug.PushEmptyStorageFilter(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8));
+            dxgiInfoQueue = dxgi.GetDebugInterface1<IDXGIInfoQueue>(0);
+            dxgiInfoQueue.SetBreakOnSeverity(allDevicesGuid, InfoQueueMessageSeverity.Error, true);
+            dxgiInfoQueue.SetBreakOnSeverity(allDevicesGuid, InfoQueueMessageSeverity.Corruption, true);
+            dxgiInfoQueue.PushEmptyStorageFilter(allDevicesGuid);
         }
 
         // shared texture
@@ -108,6 +126,28 @@ class SharedTextureInterop : IDisposable
                     d3d11DeviceContext.CopyResource(wpfTexture, sharedTexture);
                     d3d11DeviceContext.Flush();
                     d3d11DeviceContext.Dispose();
+
+                    // debug messages
+                    for (ulong i = 0; i < d3d11InfoQueue.GetNumStoredMessagesAllowedByRetrievalFilter(); ++i)
+                    {
+                        nuint messageLength = 0;
+                        d3d11InfoQueue.GetMessageA(i, null, ref messageLength);
+
+                        fixed (byte* msgBytes = new byte[messageLength])
+                            if (d3d11InfoQueue.GetMessageA(i, (Message*)msgBytes, ref messageLength) == 0)
+                                Messages += $"D3D11: {new string((sbyte*)((Message*)msgBytes)->PDescription)}\n";
+                    }
+                    d3d11InfoQueue.ClearStoredMessages();
+
+                    for (ulong i = 0; i < dxgiInfoQueue.GetNumStoredMessagesAllowedByRetrievalFilters(allDevicesGuid); ++i)
+                    {
+                        nuint messageLength = 0;
+                        dxgiInfoQueue.GetMessageA(allDevicesGuid, i, null, ref messageLength);
+                        fixed (byte* msgBytes = new byte[messageLength])
+                            if (dxgiInfoQueue.GetMessageA(allDevicesGuid, i, (InfoQueueMessage*)msgBytes, ref messageLength) == 0)
+                                Messages += $"DXGI: {new string((sbyte*)((InfoQueueMessage*)msgBytes)->PDescription)}\n";
+                    }
+                    dxgiInfoQueue.ClearStoredMessages(allDevicesGuid);
 
                     NewFrameReady?.Invoke();
                 }
