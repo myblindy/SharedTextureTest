@@ -121,7 +121,7 @@ int main()
 		sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_WAITFORINPUTIDLE;
 		sei.lpVerb = "open";
 		sei.lpFile = "SharedTextureTestClient.exe";
-		sei.lpDirectory = "E:\\gitrepos\\SharedTextureTest\\SharedTextureTestClient\\bin\\x64\\Debug\\net10.0-windows";
+		sei.lpDirectory = "..\\SharedTextureTestClient\\bin\\x64\\Debug\\net9.0-windows";
 		ShellExecuteExA(&sei);
 
 		ConnectNamedPipe(hPipe, nullptr);

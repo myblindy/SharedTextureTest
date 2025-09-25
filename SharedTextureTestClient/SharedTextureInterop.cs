@@ -1,6 +1,7 @@
 ﻿using Silk.NET.Core.Native;
 using Silk.NET.Direct3D11;
 using Silk.NET.DXGI;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 
@@ -30,13 +31,34 @@ class SharedTextureInterop : IDisposable
 
     public unsafe SharedTextureInterop()
     {
-        //Debugger.Launch();
+        Debugger.Launch();
 
         // d3d11 device
         ReadOnlySpan<D3DFeatureLevel> featureLevels = [D3DFeatureLevel.Level111, D3DFeatureLevel.Level110];
         fixed (D3DFeatureLevel* pFeatureLevels = featureLevels)
-            SilkMarshal.ThrowHResult(d3d11.CreateDevice(default(ComPtr<IDXGIAdapter>), D3DDriverType.Hardware, 0, (uint)CreateDeviceFlag.BgraSupport,
+            SilkMarshal.ThrowHResult(d3d11.CreateDevice(default(ComPtr<IDXGIAdapter>), D3DDriverType.Hardware, 0,
+                (uint)(CreateDeviceFlag.BgraSupport | CreateDeviceFlag.Debug),
                 pFeatureLevels, 2, D3D11.SdkVersion, ref d3d11Device, null, ref d3d11DeviceContext));
+
+        using (var d3d11Debug = d3d11Device.QueryInterface<ID3D11Debug>())
+        using (var d3d11DebugInfoQueue = d3d11Debug.QueryInterface<ID3D11InfoQueue>())
+        {
+            d3d11DebugInfoQueue.SetBreakOnSeverity(MessageSeverity.Corruption, true);
+            d3d11DebugInfoQueue.SetBreakOnSeverity(MessageSeverity.Error, true);
+            d3d11DebugInfoQueue.PushEmptyStorageFilter();
+
+            d3d11Debug.ReportLiveDeviceObjects(RldoFlags.Detail);
+        }
+
+        using (var dxgi = DXGI.GetApi())
+        using (var dxgiDebug = dxgi.GetDebugInterface1<IDXGIInfoQueue>(0))
+        {
+            dxgiDebug.SetBreakOnSeverity(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8),
+                InfoQueueMessageSeverity.Error, true);
+            dxgiDebug.SetBreakOnSeverity(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8),
+                InfoQueueMessageSeverity.Corruption, true);
+            dxgiDebug.PushEmptyStorageFilter(new(0xe48ae283, 0xda80, 0x490b, 0x87, 0xe6, 0x43, 0xe9, 0xa9, 0xcf, 0xda, 0x8));
+        }
 
         // shared texture
         Texture2DDesc desc = new()

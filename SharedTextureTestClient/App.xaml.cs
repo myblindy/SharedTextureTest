@@ -1,14 +1,15 @@
-﻿using System.Configuration;
-using System.Data;
+﻿using Evergine.Bindings.RenderDoc;
 using System.Windows;
 
-namespace SharedTextureTestClient
-{
-    /// <summary>
-    /// Interaction logic for App.xaml
-    /// </summary>
-    public partial class App : Application
-    {
-    }
+namespace SharedTextureTestClient;
 
+public partial class App : Application
+{
+    public static RenderDoc RenderDoc { get; private set; } = null!;
+
+    public App()
+    {
+        RenderDoc.Load(out var api);
+        RenderDoc = api;
+    }
 }
